@@ -1,6 +1,6 @@
-# MYOS — x86 Assembly Kernel Prototype
+# Power_Kernel — x86 Assembly Kernel Prototype
 
-**MYOS** is a small educational operating-system prototype written in NASM assembly for **32-bit x86, BIOS boot, and QEMU**.
+**Power_Kernel** is a small educational operating-system prototype written in NASM assembly for **32-bit x86, BIOS boot, and QEMU**.
 
 > Status: early prototype / learning project. It is not a production operating system, and it has not yet been validated on physical hardware.
 
@@ -89,4 +89,4 @@ Issues and pull requests are welcome. Please include the host OS, NASM version, 
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT. PolyForm Noncommercial 1.0.0. See [LICENSE](LICENSE).
