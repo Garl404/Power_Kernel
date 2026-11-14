@@ -1,0 +1,7 @@
+build/
+*.bin
+*.iso
+*.img
+*.o
+*.elf
+iso/boot/kernel.bin
