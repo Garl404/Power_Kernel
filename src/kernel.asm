@@ -3318,7 +3318,7 @@ elf_code:
 elf_code_end:
 
 banner:
-    db "Power Kernel 0.3.0", 10
+    db "Power Kernel 0.3.1", 10
     db "x86_64 microkernel", 10, 10, 0
 
 str_vmm_ok db 0
@@ -3376,7 +3376,7 @@ help_text:
     db "  halt           halt the system", 10, 0
 
 about_text:
-    db "Power Kernel 0.3.0 - x86-64 microkernel in NASM assembly", 10, 0
+    db "Power Kernel 0.3.1 - x86-64 microkernel in NASM assembly", 10, 0
 
 unknown_text db "unknown command, type 'help'", 10, 0
 

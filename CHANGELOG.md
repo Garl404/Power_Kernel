@@ -5,6 +5,16 @@ All notable changes to Power Kernel are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-11-15
+
+### Changed
+
+- Boot self-tests now print a single summary line instead of six separate lines
+
+### Removed
+
+- Local wiki pages (`wiki/`) and the wiki preview server (`wiki_server.py`)
+
 ## [0.3.0] - 2026-10-18
 
 ### Added
@@ -74,3 +84,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [0.1.0]: https://github.com/Garl404/Power_Kernel/releases/tag/v0.1.0
 [0.2.0]: https://github.com/Garl404/Power_Kernel/releases/tag/v0.2.0
 [0.3.0]: https://github.com/Garl404/Power_Kernel/releases/tag/v0.3.0
+[0.3.1]: https://github.com/Garl404/Power_Kernel/releases/tag/v0.3.1

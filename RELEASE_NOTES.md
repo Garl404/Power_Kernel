@@ -1,6 +1,9 @@
 # Power Kernel 发行说明
 
-## v0.3.0 — 2026-10-18
+## v0.3.1 — 2026-11-15
+
+> v0.3.1 是 v0.3.0 的小更新：精简了开机自检输出，并移除了本地 wiki 预览
+> （`wiki/` 与 `wiki_server.py`）。核心功能与 v0.3.0 一致，详见下文。
 
 Power Kernel 是一个从零开始、用**纯 NASM 汇编**写成的 x86-64 微内核：没有 C、
 没有运行时、没有链接器，整个内核就是单个 `src/kernel.asm` 文件。
@@ -33,7 +36,7 @@ PS/2 键盘、交互式 shell。
 
 ---
 
-## 本次新增（v0.3.0）
+## 核心特性（阶段 3，自 v0.3.0 起）
 
 ### 进程模型（fork / exec / exit / wait）
 
@@ -92,7 +95,7 @@ make run
 启动后：
 
 ```
-Power Kernel 0.3.0
+Power Kernel 0.3.1
 x86_64 microkernel
 
 [mem] physical memory manager ready
