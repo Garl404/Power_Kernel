@@ -5,6 +5,22 @@ All notable changes to Power Kernel are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-11-15
+
+### Added
+
+- Priority scheduler: 8 priority levels, highest-priority-first with round-robin within a level
+- Per-task time slice (quantum) that grows with lower priority
+- `nice` system call and shell command (`nice <0-7>`) to set a task's priority
+- Multi-level feedback queue (MLFQ): CPU-bound tasks are demoted on quantum expiry, blocking tasks are promoted
+- Real-time policies `FIFO` and `RR` with a `SYS_SCHED` call and `policy <0-2>` command; real-time tasks keep a fixed priority (no MLFQ demotion)
+- Absolute sleep wake times (no per-tick countdown drift)
+- New shell commands: `sched`, `spin`, `fifo`, `sleeptest`
+
+### Fixed
+
+- `switch_to` did not re-enable interrupts (`sti`), so a pure busy-loop task entered directly (not through an interrupt frame) would run with interrupts disabled and starve every other task
+
 ## [0.3.1] - 2026-11-15
 
 ### Changed
@@ -85,3 +101,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [0.2.0]: https://github.com/Garl404/Power_Kernel/releases/tag/v0.2.0
 [0.3.0]: https://github.com/Garl404/Power_Kernel/releases/tag/v0.3.0
 [0.3.1]: https://github.com/Garl404/Power_Kernel/releases/tag/v0.3.1
+[0.4.0]: https://github.com/Garl404/Power_Kernel/releases/tag/v0.4.0

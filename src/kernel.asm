@@ -66,7 +66,18 @@ TCB_MAIL_COUNT  equ 562
 TCB_SLEEP       equ 568
 TCB_EXIT_STATUS equ 576
 TCB_CR3         equ 584
-TCB_SIZE        equ 592
+TCB_PRIORITY    equ 592
+TCB_POLICY      equ 593
+TCB_SLICE       equ 600
+TCB_SIZE        equ 608
+
+MAX_PRIO        equ 8
+DEFAULT_PRIO    equ 4
+BASE_SLICE      equ 10
+
+SCHED_NORMAL    equ 0
+SCHED_FIFO      equ 1
+SCHED_RR        equ 2
 
 SYS_EXIT        equ 0
 SYS_WRITE       equ 1
@@ -80,6 +91,8 @@ SYS_FORK        equ 8
 SYS_WAIT        equ 9
 SYS_EXEC        equ 10
 SYS_CLONE       equ 11
+SYS_NICE        equ 12
+SYS_SCHED       equ 13
 
 HEAP_START      equ 0x400000
 HEAP_SIZE       equ 0x800000
@@ -785,7 +798,83 @@ pit_init:
 timer_tick:
     inc qword [tick_count]
     call wake_sleepers
+    mov rax, [current_task]
+    TCB_BASE rax, rax
+    dec qword [rax + TCB_SLICE]
+    jg .check_preempt
+    cmp byte [rax + TCB_POLICY], SCHED_FIFO
+    je .fifo_expire
+    call sched_demote
     call schedule
+    ret
+.fifo_expire:
+    movzx rdx, byte [rax + TCB_PRIORITY]
+    inc rdx
+    imul rdx, BASE_SLICE
+    mov [rax + TCB_SLICE], rdx
+    jmp .check_preempt
+.check_preempt:
+    movzx rcx, byte [rax + TCB_PRIORITY]
+    xor rdx, rdx
+.scan:
+    cmp rdx, MAX_TASKS
+    jge .done
+    TCB_BASE r8, rdx
+    cmp byte [r8 + TCB_STATE], TASK_READY
+    jne .next
+    movzx r9, byte [r8 + TCB_PRIORITY]
+    cmp r9, rcx
+    jl .preempt
+.next:
+    inc rdx
+    jmp .scan
+.preempt:
+    call schedule
+.done:
+    ret
+
+sched_demote:
+    mov rax, [current_task]
+    TCB_BASE rax, rax
+    cmp byte [rax + TCB_POLICY], SCHED_NORMAL
+    jne .reset_only
+    movzx rdx, byte [rax + TCB_PRIORITY]
+    cmp rdx, MAX_PRIO - 1
+    jae .done
+    inc rdx
+    mov byte [rax + TCB_PRIORITY], dl
+.done:
+    inc rdx
+    imul rdx, BASE_SLICE
+    mov [rax + TCB_SLICE], rdx
+    ret
+.reset_only:
+    movzx rdx, byte [rax + TCB_PRIORITY]
+    inc rdx
+    imul rdx, BASE_SLICE
+    mov [rax + TCB_SLICE], rdx
+    ret
+
+sched_promote:
+    mov rax, [current_task]
+    TCB_BASE rax, rax
+    cmp byte [rax + TCB_POLICY], SCHED_NORMAL
+    jne .reset_only
+    movzx rdx, byte [rax + TCB_PRIORITY]
+    test rdx, rdx
+    jz .done
+    dec rdx
+    mov byte [rax + TCB_PRIORITY], dl
+.done:
+    inc rdx
+    imul rdx, BASE_SLICE
+    mov [rax + TCB_SLICE], rdx
+    ret
+.reset_only:
+    movzx rdx, byte [rax + TCB_PRIORITY]
+    inc rdx
+    imul rdx, BASE_SLICE
+    mov [rax + TCB_SLICE], rdx
     ret
 
 wake_sleepers:
@@ -794,9 +883,11 @@ wake_sleepers:
     TCB_BASE rax, rcx
     cmp byte [rax + TCB_STATE], TASK_SLEEP
     jne .next
-    dec qword [rax + TCB_SLEEP]
+    mov rdx, [tick_count]
+    cmp qword [rax + TCB_SLEEP], rdx
     jg .next
     mov byte [rax + TCB_STATE], TASK_READY
+    mov qword [rax + TCB_SLEEP], 0
 .next:
     inc rcx
     cmp rcx, MAX_TASKS
@@ -1951,6 +2042,7 @@ sched_init:
     mov rdi, init_task
     mov rsi, name_init
     call task_create
+    mov byte [tcb_array + TCB_PRIORITY], MAX_PRIO - 1
     ret
 
 task_create:
@@ -1996,6 +2088,9 @@ task_create:
     mov qword [rax + TCB_EXIT_STATUS], 0
     mov rdx, [current_pml4]
     mov [rax + TCB_CR3], rdx
+    mov byte [rax + TCB_PRIORITY], DEFAULT_PRIO
+    mov byte [rax + TCB_POLICY], SCHED_NORMAL
+    mov qword [rax + TCB_SLICE], (DEFAULT_PRIO + 1) * BASE_SLICE
     mov r12, rcx
     mov rax, rcx
     inc rax
@@ -2080,6 +2175,10 @@ schedule:
 
 find_next:
     mov rcx, [current_task]
+    xor r8, r8
+.prio_loop:
+    cmp r8, MAX_PRIO
+    jge .none
     mov rdx, rcx
     inc rdx
 .search1:
@@ -2087,19 +2186,28 @@ find_next:
     jge .search2
     TCB_BASE rax, rdx
     cmp byte [rax + TCB_STATE], TASK_READY
+    jne .s1next
+    cmp byte [rax + TCB_PRIORITY], r8b
     je .found
+.s1next:
     inc rdx
     jmp .search1
 .search2:
     xor rdx, rdx
 .search2loop:
     cmp rdx, rcx
-    jg .none
+    jg .prio_next
     TCB_BASE rax, rdx
     cmp byte [rax + TCB_STATE], TASK_READY
+    jne .s2next
+    cmp byte [rax + TCB_PRIORITY], r8b
     je .found
+.s2next:
     inc rdx
     jmp .search2loop
+.prio_next:
+    inc r8
+    jmp .prio_loop
 .found:
     mov rax, rdx
     ret
@@ -2122,6 +2230,7 @@ switch_to:
     pop r12
     pop rbp
     pop rbx
+    sti
     ret
 
 ipc_send:
@@ -2209,6 +2318,7 @@ ipc_recv:
     pop rbx
     ret
 .block:
+    call sched_promote
     mov byte [r8 + TCB_STATE], TASK_RECV
     call schedule
     jmp .retry
@@ -2243,7 +2353,40 @@ syscall_handler:
     je .exec
     cmp rax, SYS_CLONE
     je .clone
+    cmp rax, SYS_NICE
+    je .nice
+    cmp rax, SYS_SCHED
+    je .setpolicy
     mov qword [rbp + 112], -1
+    ret
+.setpolicy:
+    mov rax, [current_task]
+    TCB_BASE rax, rax
+    mov rdx, r10
+    cmp rdx, SCHED_RR
+    jbe .setpolicy_ok
+    mov rdx, SCHED_NORMAL
+.setpolicy_ok:
+    mov byte [rax + TCB_POLICY], dl
+    movzx rdx, byte [rax + TCB_PRIORITY]
+    inc rdx
+    imul rdx, BASE_SLICE
+    mov [rax + TCB_SLICE], rdx
+    mov qword [rbp + 112], 0
+    ret
+.nice:
+    mov rax, [current_task]
+    TCB_BASE rax, rax
+    mov rdx, r10
+    cmp rdx, MAX_PRIO
+    jb .nice_ok
+    mov rdx, MAX_PRIO - 1
+.nice_ok:
+    mov byte [rax + TCB_PRIORITY], dl
+    inc rdx
+    imul rdx, BASE_SLICE
+    mov [rax + TCB_SLICE], rdx
+    mov qword [rbp + 112], 0
     ret
 .write:
     mov rdi, r10
@@ -2276,14 +2419,18 @@ syscall_handler:
     mov [rbp + 112], rax
     ret
 .sleep:
+    call sched_promote
     mov rax, [current_task]
     TCB_BASE rax, rax
-    mov [rax + TCB_SLEEP], r10
+    mov rdx, [tick_count]
+    add rdx, r10
+    mov [rax + TCB_SLEEP], rdx
     mov byte [rax + TCB_STATE], TASK_SLEEP
     call schedule
     mov qword [rbp + 112], 0
     ret
 .yield:
+    call sched_promote
     call schedule
     mov qword [rbp + 112], 0
     ret
@@ -2372,6 +2519,7 @@ syscall_handler:
     inc rcx
     cmp rcx, MAX_TASKS
     jl .wscan
+    call sched_promote
     mov rax, [current_task]
     TCB_BASE rax, rax
     mov byte [rax + TCB_STATE], TASK_WAIT
@@ -2446,6 +2594,17 @@ do_fork:
     mov byte [r14 + TCB_MAIL_COUNT], 0
     mov qword [r14 + TCB_SLEEP], 0
     mov qword [r14 + TCB_EXIT_STATUS], 0
+    mov r15, [current_task]
+    TCB_BASE r15, r15
+    movzx r15, byte [r15 + TCB_PRIORITY]
+    mov byte [r14 + TCB_PRIORITY], r15b
+    inc r15
+    imul r15, BASE_SLICE
+    mov [r14 + TCB_SLICE], r15
+    mov r15, [current_task]
+    TCB_BASE r15, r15
+    movzx r15, byte [r15 + TCB_POLICY]
+    mov byte [r14 + TCB_POLICY], r15b
     mov r15, [current_task]
     TCB_BASE r15, r15
     movzx r15, byte [r15 + TCB_PID]
@@ -2595,6 +2754,17 @@ do_clone:
     mov byte [r14 + TCB_MAIL_COUNT], 0
     mov qword [r14 + TCB_SLEEP], 0
     mov qword [r14 + TCB_EXIT_STATUS], 0
+    mov r13, [current_task]
+    TCB_BASE r13, r13
+    movzx r13, byte [r13 + TCB_PRIORITY]
+    mov byte [r14 + TCB_PRIORITY], r13b
+    inc r13
+    imul r13, BASE_SLICE
+    mov [r14 + TCB_SLICE], r13
+    mov r13, [current_task]
+    TCB_BASE r13, r13
+    movzx r13, byte [r13 + TCB_POLICY]
+    mov byte [r14 + TCB_POLICY], r13b
     mov r13, [current_task]
     TCB_BASE r13, r13
     movzx r13, byte [r13 + TCB_PID]
@@ -3083,10 +3253,40 @@ process_command:
     test eax, eax
     jz .demo
     mov rdi, shell_buf
+    mov rsi, cmd_sched
+    call strcmp
+    test eax, eax
+    jz .sched
+    mov rdi, shell_buf
+    mov rsi, cmd_spin
+    call strcmp
+    test eax, eax
+    jz .spin
+    mov rdi, shell_buf
+    mov rsi, cmd_fifo
+    call strcmp
+    test eax, eax
+    jz .fifo
+    mov rdi, shell_buf
     mov rsi, cmd_cls
     call strcmp
     test eax, eax
     jz .clear
+    mov rdi, shell_buf
+    mov rsi, cmd_nice
+    call starts_with
+    test eax, eax
+    jz .nice
+    mov rdi, shell_buf
+    mov rsi, cmd_policy
+    call starts_with
+    test eax, eax
+    jz .policy
+    mov rdi, shell_buf
+    mov rsi, cmd_sleeptest
+    call strcmp
+    test eax, eax
+    jz .sleeptest
     mov rdi, shell_buf
     mov rsi, cmd_echo
     call starts_with
@@ -3141,6 +3341,17 @@ process_command:
     mov al, ' '
     call kputc
     TCB_BASE rax, rbx
+    movzx rax, byte [rax + TCB_PRIORITY]
+    call kprint_dec
+    mov al, ' '
+    call kputc
+    TCB_BASE rax, rbx
+    movzx rax, byte [rax + TCB_POLICY]
+    mov al, [policy_chars + rax]
+    call kputc
+    mov al, ' '
+    call kputc
+    TCB_BASE rax, rbx
     lea rsi, [rax + TCB_NAME]
     call kprint
     call knewline
@@ -3156,6 +3367,39 @@ process_command:
     cli
     hlt
     jmp $
+.nice:
+    movzx rdi, byte [shell_buf + 5]
+    sub rdi, '0'
+    cmp rdi, MAX_PRIO
+    jb .nice_ok
+    mov rdi, MAX_PRIO - 1
+.nice_ok:
+    mov rax, SYS_NICE
+    int 0x80
+    ret
+.policy:
+    movzx rdi, byte [shell_buf + 7]
+    sub rdi, '0'
+    cmp rdi, SCHED_RR
+    jbe .policy_ok
+    xor rdi, rdi
+.policy_ok:
+    mov rax, SYS_SCHED
+    int 0x80
+    ret
+.sleeptest:
+    push rbx
+    mov rax, [tick_count]
+    mov rbx, rax
+    mov rdi, 100
+    mov rax, SYS_SLEEP
+    int 0x80
+    mov rax, [tick_count]
+    sub rax, rbx
+    call kprint_dec
+    call knewline
+    pop rbx
+    ret
 .echo:
     mov rsi, shell_buf + 5
     mov rdi, [echo_pid]
@@ -3192,6 +3436,35 @@ process_command:
     mov rsi, name_user
     call task_create
     ret
+.sched:
+    push r12
+    mov rdi, busy_hi
+    mov rsi, name_hi
+    call task_create
+    mov r12, rax
+    TCB_BASE rax, r12
+    mov byte [rax + TCB_PRIORITY], 0
+    mov rdi, busy_lo
+    mov rsi, name_lo
+    call task_create
+    mov r12, rax
+    TCB_BASE rax, r12
+    mov byte [rax + TCB_PRIORITY], 7
+    pop r12
+    ret
+.spin:
+    mov rdi, spin_task
+    mov rsi, name_spin
+    call task_create
+    ret
+.fifo:
+    mov rdi, spin_task
+    mov rsi, name_fifo
+    call task_create
+    mov r12, rax
+    TCB_BASE rax, r12
+    mov byte [rax + TCB_POLICY], SCHED_FIFO
+    ret
 
 cpu_vendor:
     push rbx
@@ -3220,6 +3493,44 @@ echo_task:
     mov rsi, echo_buf
     mov rax, SYS_REPLY
     int 0x80
+    jmp .loop
+
+busy_hi:
+    mov rcx, 20
+.loop:
+    test rcx, rcx
+    jz .exit
+    mov rax, SYS_WRITE
+    mov rdi, msg_H
+    mov rsi, 1
+    int 0x80
+    dec rcx
+    jmp .loop
+.exit:
+    mov rax, SYS_EXIT
+    mov rdi, 0
+    int 0x80
+    jmp $
+
+busy_lo:
+    mov rcx, 20
+.loop:
+    test rcx, rcx
+    jz .exit
+    mov rax, SYS_WRITE
+    mov rdi, msg_L
+    mov rsi, 1
+    int 0x80
+    dec rcx
+    jmp .loop
+.exit:
+    mov rax, SYS_EXIT
+    mov rdi, 0
+    int 0x80
+    jmp $
+
+spin_task:
+.loop:
     jmp .loop
 
 user_task:
@@ -3318,7 +3629,7 @@ elf_code:
 elf_code_end:
 
 banner:
-    db "Power Kernel 0.3.1", 10
+    db "Power Kernel 0.4.0", 10
     db "x86_64 microkernel", 10, 10, 0
 
 str_vmm_ok db 0
@@ -3356,6 +3667,12 @@ cmd_uptime db "uptime", 0
 cmd_cpu db "cpu", 0
 cmd_reboot db "reboot", 0
 cmd_demo db "demo", 0
+cmd_sched db "sched", 0
+cmd_spin db "spin", 0
+cmd_fifo db "fifo", 0
+cmd_nice db "nice ", 0
+cmd_policy db "policy ", 0
+cmd_sleeptest db "sleeptest", 0
 
 str_uptime db "uptime: ", 0
 str_uptime_s db " ticks", 10, 0
@@ -3372,11 +3689,17 @@ help_text:
     db "  cpu            CPU vendor string", 10
     db "  echo <text>    echo text via IPC", 10
     db "  demo           run the process demo", 10
+    db "  sched          scheduler priority demo", 10
+    db "  spin           busy-loop task (MLFQ demote demo)", 10
+    db "  fifo           busy-loop task (FIFO, no demote)", 10
+    db "  nice <0-7>     set shell priority (0=high)", 10
+    db "  policy <0-2>   set policy (0=norm 1=fifo 2=rr)", 10
+    db "  sleeptest      sleep 100 ticks, print elapsed", 10
     db "  reboot         reboot the system", 10
     db "  halt           halt the system", 10, 0
 
 about_text:
-    db "Power Kernel 0.3.1 - x86-64 microkernel in NASM assembly", 10, 0
+    db "Power Kernel 0.4.0 - x86-64 microkernel in NASM assembly", 10, 0
 
 unknown_text db "unknown command, type 'help'", 10, 0
 
@@ -3386,6 +3709,10 @@ name_echo db "echo", 0
 name_user db "user", 0
 name_forked db "forked", 0
 name_thread db "thread", 0
+name_hi db "hi", 0
+name_lo db "lo", 0
+name_spin db "spin", 0
+name_fifo db "fifo", 0
 
 user_msg db "USER-OK", 10, 0
 str_user_fail db "[user] ring 3 test FAILED", 10, 0
@@ -3395,6 +3722,8 @@ msg_done db "parent done", 10, 0
 msg_nl db 10, 0
 msg_elf db "elf", 10, 0
 msg_thread db "thread", 10, 0
+msg_H db "H", 0
+msg_L db "L", 0
 
 state_names:
     dq str_state_free, str_state_ready, str_state_running, str_state_recv, str_state_sleep, str_state_dead, str_state_wait
@@ -3406,6 +3735,8 @@ str_state_recv db "recv", 0
 str_state_sleep db "sleep", 0
 str_state_dead db "dead", 0
 str_state_wait db "wait", 0
+
+policy_chars db "NFR", 0
 
 idtr:
     dw 256 * 16 - 1
