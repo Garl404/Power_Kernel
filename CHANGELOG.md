@@ -7,19 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.4.0] - 2026-11-15
 
-### Added
+阶段 4「调度器」完成：调度器从最初的固定轮转，升级为「优先级 + 时间片 + 多级反馈
+队列（MLFQ）+ 实时策略（RR/FIFO）」的完整调度器。
 
-- Priority scheduler: 8 priority levels, highest-priority-first with round-robin within a level
-- Per-task time slice (quantum) that grows with lower priority
-- `nice` system call and shell command (`nice <0-7>`) to set a task's priority
-- Multi-level feedback queue (MLFQ): CPU-bound tasks are demoted on quantum expiry, blocking tasks are promoted
-- Real-time policies `FIFO` and `RR` with a `SYS_SCHED` call and `policy <0-2>` command; real-time tasks keep a fixed priority (no MLFQ demotion)
-- Absolute sleep wake times (no per-tick countdown drift)
-- New shell commands: `sched`, `spin`, `fifo`, `sleeptest`
+### 新增
 
-### Fixed
+- **优先级调度**：8 级优先级（0 最高），`find_next` 按优先级从高到低扫描，同一优先级
+  内轮转
+- **时间片**：每任务独立 quantum（`TCB_SLICE` = `(优先级+1)×10` tick），到期让出 CPU
+- **多级反馈队列（MLFQ）**：
+  - 用完时间片的 CPU 密集任务降级（优先级 +1）
+  - 阻塞（recv / sleep / wait / yield）的 I/O 密集任务升级（优先级 -1）
+- **实时策略**：
+  - `FIFO`：固定优先级，不降级、不让出（运行至阻塞或被更高优先级任务抢占）
+  - `RR`：固定优先级，不降级、同级轮转
+  - 实时任务不参与 MLFQ 升降级
+- 新系统调用：`SYS_NICE`（12，设置优先级）、`SYS_SCHED`（13，设置调度策略）
+- 精确睡眠：睡眠改为**绝对唤醒时间**（`tick_count + 时长`），不再每 tick 递减计数，
+  消除累积漂移
+- 新增 shell 命令：`nice <0-7>`、`policy <0-2>`、`sched`、`spin`、`fifo`、`sleeptest`
+- `tasks` 命令新增优先级列与策略列（`N` = normal / `F` = fifo / `R` = rr）
 
-- `switch_to` did not re-enable interrupts (`sti`), so a pure busy-loop task entered directly (not through an interrupt frame) would run with interrupts disabled and starve every other task
+### 变更
+
+- TCB 结构扩展：新增 `TCB_PRIORITY`、`TCB_POLICY`、`TCB_SLICE` 字段，
+  `TCB_SIZE` 592 → 608
+- `init`（空闲任务，hlt 循环）固定为最低优先级 7，避免饿死低优先级任务
+- `fork` / `clone` 的子任务继承父任务的优先级与调度策略
+
+### 修复
+
+- `switch_to` 缺少 `sti`：纯忙等任务（通过 `ret` 直接进入入口、不经中断帧）会带着
+  关中断运行，导致定时器不再触发、饿死所有其它任务；已在 `ret` 前补 `sti`
 
 ## [0.3.1] - 2026-11-15
 
